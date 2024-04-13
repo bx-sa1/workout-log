@@ -3,14 +3,12 @@ use std::sync::{Arc, Mutex};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use sqlite::State;
 use time::{
-    format_description::FormatItem, macros::format_description,
-    PrimitiveDateTime,
+    OffsetDateTime,
 };
 
-pub type AsyncDB = Arc<Mutex<DB>>;
+use time::format_description::well_known::Iso8601;
 
-const DATE_FORMAT: &'static [FormatItem] =
-    format_description!("[year]-[month]-[day]_[hour]:[minute]:[second]");
+pub type AsyncDB = Arc<Mutex<DB>>;
 
 #[derive(Serialize)]
 pub struct WorkoutType {
@@ -46,31 +44,15 @@ impl WorkoutDifficulty {
 
 #[derive(Serialize, Deserialize)]
 pub struct Workout {
-    #[serde(serialize_with = "primitive_date_time_to_str")]
-    #[serde(deserialize_with = "primitive_date_time_from_str")]
-    date: PrimitiveDateTime,
-    workout_type: String,
+    #[serde(with = "time::serde::iso8601")]
+    date: OffsetDateTime,
+    exercise: String,
     progression: String,
     sets: i64,
     reps: i64,
     weight: i64,
     difficulty: WorkoutDifficulty,
     notes: String,
-}
-
-fn primitive_date_time_to_str<S: Serializer>(dt: &PrimitiveDateTime, s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_str(&dt.format(DATE_FORMAT).unwrap())
-}
-
-fn primitive_date_time_from_str<'de, D: Deserializer<'de>>(d: D) -> Result<PrimitiveDateTime, D::Error> {
-    let s: Option<String> = Deserialize::deserialize(d)?;
-    match s {
-        Some(s) => match PrimitiveDateTime::parse(&s, DATE_FORMAT) {
-            Ok(o) => Ok(o),
-            Err(_) => Err(de::Error::custom("Failed to parse date time")),
-        },
-        None => Err(de::Error::custom("Not a string"))
-    }
 }
 
 pub struct DB {
@@ -82,7 +64,7 @@ impl DB {
         let query = r#"
             CREATE TABLE IF NOT EXISTS workouts (
                 date TEXT PRIMARY KEY,
-                workout_type TEXT NOT NULL,
+                exercise TEXT NOT NULL,
                 progression TEXT DEFAULT "",
                 sets INTEGER NOT NULL,
                 reps INTEGER NOT NULL,
@@ -90,7 +72,7 @@ impl DB {
                 difficulty TEXT NOT NULL,
                 notes TEXT DEFAULT ""
             );
-            CREATE TABLE IF NOT EXISTS workout_types (
+            CREATE TABLE IF NOT EXISTS exercises (
                 name TEXT PRIMARY KEY,
                 progressions TEXT
             );
@@ -102,16 +84,16 @@ impl DB {
     }
 
     pub fn get_workout(&self, date: String) -> sqlite::Result<Workout> {
-        let query = "SELECT * FROM workouts WHERE date = ?";
+        let query = "SELECT * FROM workouts WHERE date = \"?\"";
 
         let mut statement = self.sqlite.prepare(query)?;
         statement.bind((1, date.as_str())).unwrap();
 
         let workout = if let Ok(State::Row) = statement.next() {
             Workout {
-                date: PrimitiveDateTime::parse(&statement.read::<String, _>("date")?, DATE_FORMAT)
+                date: OffsetDateTime::parse(&statement.read::<String, _>("date")?, &Iso8601::PARSING)
                     .unwrap(),
-                workout_type: statement.read::<String, _>("workout_type")?,
+                exercise: statement.read::<String, _>("exercise")?,
                 progression: statement.read::<String, _>("progression")?,
                 sets: statement.read::<i64, _>("sets")?,
                 reps: statement.read::<i64, _>("reps")?,
@@ -138,11 +120,11 @@ impl DB {
     pub fn add_workout(&self, workout: Workout) -> sqlite::Result<()> {
         let query = format!(
             r#"
-            INSERT INTO workouts (date, workout_type, progression, sets, reps, weight, difficulty, notes)
+            INSERT INTO workouts (date, exercise, progression, sets, reps, weight, difficulty, notes)
             VALUES("{}", "{}", "{}", {}, {}, {}, "{}", "{}")
             "#,
-            workout.date.format(DATE_FORMAT).unwrap(),
-            workout.workout_type,
+            workout.date.format(&Iso8601::DEFAULT).unwrap(),
+            workout.exercise,
             workout.progression,
             workout.sets,
             workout.reps,
@@ -160,7 +142,7 @@ impl DB {
         let query = format!(
             r#"UPDATE workouts
             SET date = {}
-                workout_type = {}
+                exercise = {}
                 progression = {}
                 sets = {}
                 reps = {}
@@ -168,8 +150,8 @@ impl DB {
                 difficulty = {}
                 notes = {}
             WHERE date = {}"#,
-            workout.date.format(DATE_FORMAT).unwrap(),
-            workout.workout_type,
+            workout.date.format(&Iso8601::DEFAULT).unwrap(),
+            workout.exercise,
             workout.progression,
             workout.sets,
             workout.reps,
@@ -183,13 +165,13 @@ impl DB {
     }
 
     pub fn delete_workout(&self, date: String) -> sqlite::Result<()> {
-        let query = format!("DELETE FROM workouts WHERE date = {}", date);
+        let query = format!("DELETE FROM workouts WHERE date = \"{}\"", date);
         
         self.sqlite.execute(query)
     }
 
     pub fn get_workouts(&self, limit: i64) -> sqlite::Result<Vec<Workout>> {
-        let query = "SELECT * FROM workouts LIMIT ?";
+        let query = "SELECT * FROM workouts ORDER BY date DESC LIMIT ?;";
 
         let mut statement = self.sqlite.prepare(query)?;
         statement.bind((1, limit)).unwrap();
@@ -198,9 +180,9 @@ impl DB {
 
         while let Ok(State::Row) = statement.next() {
             workout_list.push(Workout {
-                date: PrimitiveDateTime::parse(&statement.read::<String, _>("date")?, DATE_FORMAT)
+                date: OffsetDateTime::parse(&statement.read::<String, _>("date")?, &Iso8601::PARSING)
                     .unwrap(),
-                workout_type: statement.read::<String, _>("workout_type")?,
+                exercise: statement.read::<String, _>("exercise")?,
                 progression: statement.read::<String, _>("progression")?,
                 sets: statement.read::<i64, _>("sets")?,
                 reps: statement.read::<i64, _>("reps")?,

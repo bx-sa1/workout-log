@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <h1>Workout Log</h1>
+    <div class=overlay>
+      <div class=overlay-header></div>
+      <div class=overlay-content></div>
+    </div>
+    <button id=add-workout-button type="button" onclick="toggle_overlay(event, 'add-workout')">Add Workout!</button>
+    <table id=workouts>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Exercise</th>
+          <th>Sets</th>
+          <th>Reps</th>
+        </tr>
+      </thead>
+    </table>
+    <script src=script.js></script>
+  </body>
+</html>
